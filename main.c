@@ -10,13 +10,25 @@
 #define output_size 8
 #define hidden_layers_number 8
 #define hidden_layers_size 8
+#define learning_rate 10
 
+//Output file to save the layers
 FILE *layersW;
+
+//Input file from which to load the layers
 FILE *loadW;
 
+//Input file from which to load the sample data
+FILE *loadS;
+
+typedef struct _neuron{
+    float sum;
+    float activation;
+}neuron;
+
 typedef struct layer{
-    float **weights;
-    float *signals;
+    float *weights;
+    neuron *signals;
     int rows;
     int cols;
 }layer;
@@ -39,25 +51,39 @@ typedef struct network{
     struct layer * section;
 }network;
 
+//Initializes the network with the amount of layers specified above
 void initnetwork(network *N);
-void saveNet(network *N);
-void forwardSignal(network *N, s_signal *input, s_signal *output);
-void loadnetwork(network *N,FILE *f);
-void printLayers(network *N);
-void trainNet(network *N);
-static inline float sigmoid(float x);
-/*
-input layers: 8 squares around, health
-actions take 1 health away from total, if it is 0 the bot dies and game ends.
-output actions: move in 1 of 8 directions, attack, eat
-*/
 
-/*
-Rules of the game: square world
-*/
+//Saves the net (weights) on a file
+void saveNet(network *N);
+
+//Propagates the signal forward from the input layer to the output layer
+void forwardSignal(network *N, s_signal *input, s_signal *output);
+
+//Load the weights of a network from a file
+void loadnetwork(network *N,FILE *f);
+
+//Prints the layers on the console (used for debug)
+void printLayers(network *N);
+
+//Trains the net to learn based on the samples
+void trainNet(network *N, s_signal *output, s_signal *sample_data,int sample_size);
+
+//Load sample data from file
+void loadSamples(s_signal *sample_data, FILE *f);
+
+//Sigmoid funcion, written inline to speed the process
+static inline float sigmoid(float x);
+
+//Derivate of the sigmoid funciont, written inline to speed the process
+static inline float d_sigmoid(float x);
+
 
 int main(void){
     network *brain=malloc(sizeof(brain));
+    s_signal *input=malloc(sizeof(s_signal));
+    s_signal *output=malloc(sizeof(s_signal));
+    s_signal *samples=malloc(sizeof(s_signal));
     brain->details.ntot=4;
     brain->section=malloc(brain->details.ntot*sizeof(layer));
     if(loadW=fopen("weights.txt","r")){
@@ -68,8 +94,6 @@ int main(void){
         initnetwork(brain,8,12,2,8);
         saveNet(brain);
     }
-    s_signal *input=malloc(sizeof(s_signal));
-    s_signal *output=malloc(sizeof(s_signal));
     input->size=input_size;
     output->size=output_size;
     input->values=malloc(input.size*sizeof(float));
@@ -77,6 +101,9 @@ int main(void){
     srand(time(NULL));
     for(int i=0;i<input->size;i++){
         input->values[i]=(float)rand()/RAND_MAX*0.98;
+    }
+    if(loadS=fopen("sample_data.txt","r")){
+        loadSamples(samples,loadS);
     }
     forwardSignal(brain,input,output);
     printf("\n\nINPUT VALUES:: ");
@@ -97,7 +124,7 @@ void printLayers(network *N){
         printf("Layer %d ::\n",k);
         for(int i=0;i<N->section[k].rows;i++){
             for(int j=0;j<N->section[k].cols;j++){
-                printf("%.3f ",N->section[k].weights[i][j]);
+                printf("%.3f ",N->section[k].weights[i*N->section[k].cols+j]);
             }
             printf("\n");
         }
@@ -108,69 +135,63 @@ void printLayers(network *N){
 void loadnetwork(network *N,FILE *f){
     fscanf(f,"%d %d %d %d %d",&N->details.ntot,&N->details.nh,&N->details.inp,&N->details.hid,&N->details.out);
     int k=0;
+    int dim;
     int inp=N->details.inp;
     int hidden=N->details.hid;
     int out=N->details.out;
     int nh=N->details.nh;
+    dim=inp*hidden;
     N->section[k].rows=inp;
     N->section[k].cols=hidden;
-    N->section[k].weights=malloc(inp*sizeof(float*));
-    N->section[k].signals=malloc(hidden*sizeof(float));
-    for(int i=0;i<inp;i++){
-        N->section[k].weights[i]=malloc(hidden*sizeof(float));
-        for(int j=0;j<hidden;j++){
-            fscanf(f,"%f",&N->section[k].weights[i][j]);
-        }
+    N->section[k].weights=malloc(dim*sizeof(float));
+    N->section[k].signals=malloc(hidden*sizeof(neuron));
+    for(int i=0;i<dim;i++){
+        fscanf(f,"%f",&N->section[k].weights[i]);
     }
+    dim=hidden*hidden;
     for(k=1;k<=nh;k++){
         N->section[k].rows=hidden;
         N->section[k].cols=hidden;
-        N->section[k].weights=malloc(hidden*sizeof(float*));
-        N->section[k].signals=malloc(hidden*sizeof(float));
-        for(int i=0;i<hidden;i++){
-            N->section[k].weights[i]=malloc(hidden*sizeof(float));
-            for(int j=0;j<hidden;j++){
-                fscanf(f,"%f",&N->section[k].weights[i][j]);
-            }
+        N->section[k].weights=malloc(dim*sizeof(float));
+        N->section[k].signals=malloc(hidden*sizeof(neuron));
+        for(int i=0;i<dim;i++){
+            fscanf(f,"%f",&N->section[k].weights[i]);
         }
     }
     N->section[k].rows=hidden;
     N->section[k].cols=out;
-    N->section[k].weights=malloc(hidden*sizeof(float*));
-    N->section[k].signals=malloc(out*sizeof(float));
-    for(int i=0;i<hidden;i++){
-        N->section[k].weights[i]=malloc(out*sizeof(float));
-        for(int j=0;j<out;j++){
-            fscanf(f,"%f",&N->section[k].weights[i][j]);
-        }
+    dim=hidden*out;
+    N->section[k].weights=malloc(dim*sizeof(float));
+    N->section[k].signals=malloc(out*sizeof(neuron));
+    for(int i=0;i<dim;i++){
+        fscanf(f,"%f",&N->section[k].weights[i]);
     }
 }
 
 void forwardSignal(network *N, s_signal *input, s_signal *output){
     int k=0;
-    //Calculate the sum for every signal
+
+    //From input layer to the first hidden layer
     for(int i=0;i<N->section[k].rows;i++){
         for(int j=0;j<N->section[k].cols;j++){
-            N->section[k].signals[j]+=N->section[k].weights[i][j]*input->values[i];
+            N->section[k].signals[i].sum+=N->section[k].weights[i*N->section[k].cols+j]*input->values[j];
         }
+        N->section[k].signals[i].activation=sigmoid(N->section[k].signals[i].sum);
     }
-    //Compute the sigmoid funciont on every signal to actually have a proper activation value (0,1)
-    for(int j=0;j<N->section[k].cols;j++){
-        N->section[k].signals[j]=sigmoid(N->section[k].signals[j]);
-    }
-    //This for loop does the same thing over the hidden layers
+    
+    //From the first hidden layer to the last layer
     for(int k=1;k<N->details.ntot;k++){
         for(int i=0;i<N->section[k].rows;i++){
             for(int j=0;j<N->section[k].cols;j++){
-                N->section[k].signals[j]+=N->section[k].weights[i][j]*N->section[k-1].signals[i];
+                N->section[k].signals[i].sum+=N->section[k].weights[i*N->section[k].cols+j]*N->section[k-1].signals[j].activation;
             }
-        }
-        for(int j=0;j<N->section[k].cols;j++){
-            N->section[k].signals[j]=sigmoid(N->section[k].signals[j]);
+            N->section[k].signals[i].activation=sigmoid(N->section[k].signals[i].sum);
         }
     }
+
+    //Copy the result of the last layer to the output layer
     for(int i=0;i<N->section[N->details.ntot-1].cols;i++){
-        output->values[i]=N->section[N->details.ntot-1].signals[i];
+        output->values[i]=N->section[N->details.ntot-1].signals[i].activation;
     }
 }
 
@@ -178,17 +199,31 @@ static inline float sigmoid(float x){
     return (float)1/1+exp(-x);
 }
 
+static inline float d_sigmoid(float x){
+    return (float)sigmoid(x)*(1-sigmoid(x));
+}
+
 void saveNet(network *N){
+    int dim=N->section[k].rows*N->section[k].cols;
     if(layersW=fopen("weights.txt","w+")){
         fprintf(layersW,"%d %d %d %d %d\n",N->details.ntot,N->details.nh,N->details.inp,N->details.hid,N->details.out);
         for(int k=0;k<N->details.ntot;k++){
-            for(int i=0;i<N->section[k].rows;i++){
-                for(int j=0;j<N->section[k].cols;j++){
-                    fprintf(layersW,"%.3f ",N->section[k].weights[i][j]);
-                }
+            for(int i=0;i<dim;i++){
+                fprintf(layersW,"%.3f ",N->section[k].weights[i]);
             }
         }
     }
+}
+
+void loadSamples(s_signal *sample_data, FILE *f){
+    int n=0;
+    puts("Loading sample data from file...\n");
+    fscanf(f,"%d",sample_data->size);
+    sample_data->values=malloc(sample_data->size*sizeof(float));
+    for(int i=0;i<sample_data->size;i++){
+        fscanf(f,"%f",sample_data->values[i]);
+    }
+    puts("Sample data loaded.\n");
 }
 
 void initnetwork(network *N){
@@ -199,46 +234,44 @@ void initnetwork(network *N){
     int out=output_size;
     int nh=hidden_layers_number;
     int hidden=hidden_layers_size;
+    int dim;
     N->details.inp=inp;
     N->details.out=out;
     N->details.hid=hidden;
     N->details.nh=nh;
     srand(time(NULL));
     int k=0;
-    N->section[k].rows=inp;
-    N->section[k].cols=hidden;
-    N->section[k].weights=malloc(inp*sizeof(float*));
-    N->section[k].signals=malloc(hidden*sizeof(float));
-    for(int i=0;i<inp;i++){
-        N->section[k].weights[i]=malloc(hidden*sizeof(float));
-        for(int j=0;j<hidden;j++){
-            N->section[k].weights[i][j]=(float)rand()/RAND_MAX*0.98;
-        }
+    dim=hidden*inp;
+    //Using matrix convenction to represent weights and matrix multiplication
+    N->section[k].rows=hidden;
+    N->section[k].cols=inp;
+    N->section[k].weights=malloc(dim*sizeof(float));
+    N->section[k].signals=malloc(hidden*sizeof(neuron));
+    for(int i=0;i<dim;i++){
+        N->section[k].weights[i]=(float)rand()/RAND_MAX*0.98;
     }
+    dim=hidden*hidden;
     for(k=1;k<=nh;k++){
         N->section[k].rows=hidden;
         N->section[k].cols=hidden;
-        N->section[k].weights=malloc(hidden*sizeof(float*));
-        N->section[k].signals=malloc(hidden*sizeof(float));
-        for(int i=0;i<hidden;i++){
-            N->section[k].weights[i]=malloc(hidden*sizeof(float));
-            for(int j=0;j<hidden;j++){
-                N->section[k].weights[i][j]=(float)rand()/RAND_MAX*0.98;
-            }
+        N->section[k].weights=malloc(dim*sizeof(float));
+        N->section[k].signals=malloc(hidden*sizeof(neuron));
+        for(int i=0;i<dim;i++){
+            N->section[k].weights[i]=(float)rand()/RAND_MAX*0.98;
         }
     }
+    dim=hidden*out;
     N->section[k].rows=hidden;
     N->section[k].cols=out;
-    N->section[k].weights=malloc(hidden*sizeof(float*));
-    N->section[k].signals=malloc(out*sizeof(float));
-    for(int i=0;i<hidden;i++){
-        N->section[k].weights[i]=malloc(out*sizeof(float));
-        for(int j=0;j<out;j++){
-            N->section[k].weights[i][j]=(float)rand()/RAND_MAX*0.98;
-        }
+    N->section[k].weights=malloc(dim*sizeof(float));
+    N->section[k].signals=malloc(out*sizeof(neuron));
+    for(int i=0;i<dim;i++){
+        N->section[k].weights[i]=(float)rand()/RAND_MAX*0.98;
     }
 }
 
-void trainNet(network *N){
+void trainNet(network *N, s_signal *output, s_signal *sample_data){
+    //Cost function: quadratic mean 1/2*(Yi-yi)^2 --> derivate: (Yi-yi)
+    
 
 }
